@@ -4,12 +4,13 @@ import numpy as np
 import pickle
 from cnntwitter.CNNTwitterPreprocessor import Preprocessor
 import os
+import re
 
 class CNNTwitterModel:
     def __init__(self, is_train, params):
         self._create_graph(is_train, params)
 
-    def _create_graph(self,is_train, params):
+    def _create_graph(self, is_train, params):
         self.sentence_length = params.sentence_length
         self.batch_size = params.batch_size
         self.embedding_size = params.embedding_size
@@ -79,10 +80,10 @@ class CNNTwitterModel:
         correct_predictions = tf.equal(self.predictions, tf.argmax(self.targets, 1))
         self.accuracy = tf.reduce_mean(tf.cast(correct_predictions, "float"), name="accuracy")
 
+        self.global_step = tf.Variable(0, name="global_step", trainable=False)
         if not is_train:
             return
         # only in training mode
-        self.global_step = tf.Variable(0, name="global_step", trainable=False)
         self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss,
                                                                             global_step=self.global_step)
 
@@ -108,10 +109,8 @@ def _run_epoch(session, model, data, train_op, verbose=True):
           model.input_data: in_x,
           model.targets: in_y,
         }
-        _, it, loss, accuracy = session.run([train_op, model.global_step, model.loss, model.accuracy], feed_dict)
-        if verbose and step % 1000 == 0:
-            print("Step: %d, loss: %f accuracy %f" % (it, loss, accuracy))
-        return it, loss, accuracy
+        _, it, loss_step, accuracy = session.run([train_op, model.global_step, model.loss, model.accuracy], feed_dict)
+        return it, loss_step, accuracy
     global_step = 0
     loss = 0
     acc = 0
@@ -121,6 +120,8 @@ def _run_epoch(session, model, data, train_op, verbose=True):
         loss += loss_it
         acc += acc_it
         count += 1
+        if verbose and global_step % 1000 == 0:
+            print("Step: %d, loss: %f accuracy %f" % (global_step, loss / count, acc / count))
     return global_step, loss / count, acc / count
 
 
@@ -161,16 +162,21 @@ def train_model(pre_data_path,
         for i in range(0, config.max_max_epoch):
             print("Epoch: %d started" % (i + 1))
             start_time = time.time()
-            _run_epoch(session, m, data_train, m.train_op, verbose=True)
+            _, loss, acc =_run_epoch(session, m, data_train, m.train_op, verbose=True)
             end_time = time.time()
             train_time += (end_time-start_time)
             save_path = saver.save(session, os.path.join(model_store_dir, model_name + ".ckpt"), global_step=(i + 1))
+            print("Training Summary -> Loss: %f, Accuracy %f" % (loss, acc))
             print("Model saved in file: %s" % save_path)
+
+            # shuffle data
+            np.random.shuffle(data_train)
 
             print("Start evaluation for Epoch %d" % (i+1))
             _, loss, acc = _run_epoch(session, m_eval, data_eval, tf.no_op(), verbose=False)
             print("Evaluation -> Loss: %f, Accuracy %f" % (loss, acc))
-            log.write("Epoch %d Loss: %f, Accuracy %f" % (i+1, loss, acc))
+            log.write("Epoch %d Loss: %f, Accuracy %f\n" % (i+1, loss, acc))
+            log.flush()
 
     print("Training Finished after: %f seconds" % train_time)
 
@@ -180,7 +186,7 @@ def eval_kaggle_test(pre_data_path, model_path, path_testdata, config=CNNTwitter
     config.vocab_size = len(vocab)
     config.sentence_length = max_sent_len
     config.dropout_prob = 1.0
-    data = get_data_mat(path_testdata, max_sent_len, word_to_id)
+    data = get_data_test(path_testdata, max_sent_len, word_to_id)
 
     with tf.Graph().as_default():
         session = tf.Session()
@@ -197,7 +203,7 @@ def eval_kaggle_test(pre_data_path, model_path, path_testdata, config=CNNTwitter
             count = 1
             out.write("Id,Prediction\n")
             print("Id,Prediction")
-            for step, (x, y) in enumerate(mat_iterator(data, model.batch_size, True)):
+            for step, (x, y) in enumerate(mat_iterator(data, model.batch_size)):
                 feed_dict = {
                     model.input_data: x
                 }
@@ -235,6 +241,22 @@ def get_data_mat(path, max_sent_len, vocab_to_id, is_pos):
                 line_id[max_sent_len:] = np.asarray([1, 0])
             else:
                 line_id[max_sent_len:] = np.asarray([0, 1])
+            res.append(line_id)
+    return np.asarray(res)
+
+
+def get_data_test(path, max_sent_len, vocab_to_id):
+    id_unk = vocab_to_id[Preprocessor.TOKEN_UNKOWN]
+    id_pad = vocab_to_id[Preprocessor.TOKEN_PAD]
+    res = []
+    with open(path, "r") as f:
+        for step, line in enumerate(f):
+            line = re.sub(r'^\d+,', "", line, count=1)
+            tokens = line.split()
+            ids = [vocab_to_id.get(x, id_unk) for x in tokens]
+            line_id = np.empty(max_sent_len + 2)
+            line_id.fill(id_pad)
+            line_id[:len(ids)] = np.asarray(ids)
             res.append(line_id)
     return np.asarray(res)
 
