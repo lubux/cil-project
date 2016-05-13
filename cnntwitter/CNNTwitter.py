@@ -2,7 +2,7 @@ import time
 import tensorflow as tf
 import numpy as np
 import pickle
-from cnntwitter.CNNTwitterPreprocessor import Preprocessor
+import cnntwitter.CNNTwitterPreprocessor as prep
 import os
 import re
 
@@ -93,12 +93,12 @@ class CNNTwitterParams:
         self.sentence_length = 64
         self.batch_size = 20
         self.embedding_size = 100
-        self.vocab_size = 20000
+        self.vocab_size = 30000
         self.filter_num = 300
         self.filter_size = 5
         self.dropout_prob = 0.5
         self.learning_rate = 1e-4
-        self.max_max_epoch = 39
+        self.max_max_epoch = 10
         self.init_scale = 0.05
         self.l2_reg_lambda = 1e-4
 
@@ -227,13 +227,13 @@ def merge_and_shuffle(pos_data, neg_data):
 
 
 def get_data_mat(path, max_sent_len, vocab_to_id, is_pos):
-    id_unk = vocab_to_id[Preprocessor.TOKEN_UNKOWN]
-    id_pad = vocab_to_id[Preprocessor.TOKEN_PAD]
+    id_unk = vocab_to_id[prep.TOKEN_UNKOWN]
+    id_pad = vocab_to_id[prep.TOKEN_PAD]
     res = []
     with open(path, "r") as f:
         for step, line in enumerate(f):
             tokens = line.split()
-            ids = [vocab_to_id.get(x, id_unk) for x in tokens]
+            ids = [vocab_to_id.get(prep.replace_word(x), id_unk) for x in tokens]
             line_id = np.empty(max_sent_len + 2)
             line_id.fill(id_pad)
             line_id[:len(ids)] = np.asarray(ids)
@@ -246,14 +246,14 @@ def get_data_mat(path, max_sent_len, vocab_to_id, is_pos):
 
 
 def get_data_test(path, max_sent_len, vocab_to_id):
-    id_unk = vocab_to_id[Preprocessor.TOKEN_UNKOWN]
-    id_pad = vocab_to_id[Preprocessor.TOKEN_PAD]
+    id_unk = vocab_to_id[prep.TOKEN_UNKOWN]
+    id_pad = vocab_to_id[prep.TOKEN_PAD]
     res = []
     with open(path, "r") as f:
         for step, line in enumerate(f):
             line = re.sub(r'^\d+,', "", line, count=1)
             tokens = line.split()
-            ids = [vocab_to_id.get(x, id_unk) for x in tokens]
+            ids = [vocab_to_id.get(prep.replace_word(x), id_unk) for x in tokens]
             line_id = np.empty(max_sent_len + 2)
             line_id.fill(id_pad)
             line_id[:len(ids)] = np.asarray(ids)
