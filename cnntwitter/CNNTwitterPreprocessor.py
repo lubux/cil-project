@@ -63,20 +63,45 @@ def replace_word(word):
     return re.sub(r'([a-z])\1+', r'\1'*2, word)
 
 
-def _split_file(file_pos, num_skip, num_entries, out):
+def split_file(file_pos, num_skip, num_entries, out):
     with open(file_pos, "r") as r_f, open(out, "w") as w_f:
         cur_num = 0
-        last_line = ""
+        last_line = None
         for step, line in enumerate(r_f):
             if step >= num_skip:
                 if cur_num == num_entries:
                     break
-                if not last_line in line:
+                if last_line is None or (last_line not in line):
                     w_f.write(line)
                     cur_num += 1
             last_line = line
 
 
+def create_big_files(num_train, num_val, num_test, file_path, out_train, out_val, out_test):
+    with open(file_path, "r") as data:
+        cur_file = open(out_train, "w")
+        last_line = None
+        step = 0
+        for line in data:
+            if step == num_train:
+                cur_file.close()
+                cur_file = open(out_val, "w")
+            elif step == num_train + num_val:
+                cur_file.close()
+                cur_file = open(out_test, "w")
+            elif step == num_train + num_val + num_test:
+                cur_file.close()
+                break
+            if last_line is None:
+                cur_file.write(line)
+                step += 1
+            else:
+                if last_line not in line:
+                    cur_file.write(line)
+                    step += 1
+            last_line = line
+
+
 def split_to_eval_set(file_pos, file_neg, num_skip, num_entries, out_pos="./val_pos.txt", out_neg="./val_neg.txt"):
-    _split_file(file_pos, num_skip, num_entries, out_pos)
-    _split_file(file_neg, num_skip, num_entries, out_neg)
+    split_file(file_pos, num_skip, num_entries, out_pos)
+    split_file(file_neg, num_skip, num_entries, out_neg)

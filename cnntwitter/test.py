@@ -13,3 +13,11 @@ temp.gen_data(20000,"./temp.p")
 #cn.eval_model("./temp.p", "./", "./twitter-datasets/test_data.txt")
 
 
+temp = Preprocessor()
+temp.process("./twitter-datasets/train_pos_full.txt")
+num_pos = temp.get_num_lines()
+print("NumPos %d" % (num_pos,))
+temp.process("./twitter-datasets/train_neg_full.txt")
+total = temp.get_num_lines()
+print("NumNeg %d" % (total - num_pos,))
+print("Total %d" % (total,))

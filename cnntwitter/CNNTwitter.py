@@ -12,6 +12,8 @@ http://alt.qcri.org/semeval2015/cdrom/pdf/SemEval079.pdf
 Interesting Blog post to read:
 http://www.wildml.com/2015/12/implementing-a-cnn-for-text-classification-in-tensorflow/
 """
+
+
 class CNNTwitterModel:
     def __init__(self, is_train, params):
         self._create_graph(is_train, params)
@@ -141,7 +143,8 @@ def train_model(pre_data_path,
                 data_eval_pos, data_eval_neg,
                 model_store_dir, model_name,
                 config=CNNTwitterParams(), eval_config=CNNTwitterParams(),
-                out_log="./log"):
+                out_log="./log",
+                restore_epoch=0):
 
     [max_sent_len, word_to_id, vocab] = load_data(pre_data_path)
     data_train_pos = get_data_mat(data_path_pos, max_sent_len, word_to_id, True)
@@ -159,7 +162,7 @@ def train_model(pre_data_path,
     eval_config.sentence_length = max_sent_len
     eval_config.dropout_prob = 1.0
 
-    acc_last = 2
+    acc_last = -1
 
     print("Start Training")
     with tf.Graph().as_default(), tf.Session() as session, open(out_log, "w") as log:
@@ -172,7 +175,14 @@ def train_model(pre_data_path,
 
         tf.initialize_all_variables().run()
         saver = tf.train.Saver(tf.all_variables())
-        for i in range(0, config.max_max_epoch):
+        if restore_epoch > 0:
+            ckpt = tf.train.get_checkpoint_state(model_store_dir)
+            if ckpt and ckpt.model_checkpoint_path:
+                saver.restore(session, ckpt.model_checkpoint_path)
+                print("Restored Session")
+            else:
+                raise RuntimeError("Model not found")
+        for i in range(restore_epoch, config.max_max_epoch):
             print("Epoch: %d started" % (i + 1))
             start_time = time.time()
             _, loss, acc =_run_epoch(session, m, data_train, m.train_op, verbose=True)
@@ -180,7 +190,7 @@ def train_model(pre_data_path,
             train_epoch_time = end_time-start_time
             train_time += train_epoch_time
             save_path = saver.save(session, os.path.join(model_store_dir, model_name + ".ckpt"), global_step=(i + 1))
-            log.write("Epoch %d Train Loss: %f, Accuracy: %f\n Time: %d" % (i+1, loss, acc, train_epoch_time))
+            log.write("Epoch %d Train Loss: %f, Accuracy: %f Time: %d\n" % (i+1, loss, acc, train_epoch_time))
             print("Training Summary -> Loss: %f, Accuracy %f Time: %d" % (loss, acc, train_epoch_time))
             print("Model saved in file: %s" % save_path)
 
@@ -192,7 +202,7 @@ def train_model(pre_data_path,
             print("Evaluation -> Loss: %f, Accuracy %f" % (loss, acc))
             log.write("Epoch %d Val Loss: %f, Accuracy %f\n" % (i+1, loss, acc))
             log.flush()
-            if acc_last < acc:
+            if acc_last > acc:
                 print("Lost accuracy on validation set in this epoch (Before: %f, Cur: %f) -> STOP"
                       % (acc_last, acc))
                 break
@@ -335,3 +345,56 @@ def mat_iterator(data, batch_size):
 
 def load_data(file_path):
     return pickle.load(open(file_path, "rb"))
+
+
+class TweetClassifier:
+    def __init__(self, save_dir, pre_data_path, config=CNNTwitterParams()):
+        [max_sent_len, word_to_id, vocab] = load_data(pre_data_path)
+        self.vocab = word_to_id
+        self.max_sent_len = max_sent_len
+        config.vocab_size = len(vocab)
+        config.sentence_length = max_sent_len
+        config.dropout_prob = 1.0
+        config.batch_size = 1
+        with tf.Graph().as_default():
+            self.session = tf.Session()
+            with self.session.as_default():
+                with tf.variable_scope("model", reuse=False):
+                    self.model = CNNTwitterModel(False, config)
+                tf.initialize_all_variables().run()
+                saver = tf.train.Saver(tf.all_variables())
+                ckpt = tf.train.get_checkpoint_state(save_dir)
+                if ckpt and ckpt.model_checkpoint_path:
+                    saver.restore(self.session, ckpt.model_checkpoint_path)
+                else:
+                    raise RuntimeError("Model not found")
+
+    def close(self):
+        self.session.close()
+
+    def classify_tweet(self, tweet):
+        """
+        :param tweet: the tweet to classify
+        :return: 0 pos 1 neg
+        """
+        id_unk = self.vocab[prep.TOKEN_UNKOWN]
+        id_pad = self.vocab[prep.TOKEN_PAD]
+        tokens = tweet.split()
+        ids = [self.vocab.get(prep.replace_word(x), id_unk) for x in tokens]
+        line_id = np.empty(self.max_sent_len)
+        line_id.fill(id_pad)
+        line_id[:len(ids)] = np.asarray(ids)
+        data = np.asarray([line_id])
+        with self.session.as_default():
+            input_dict = {
+                self.model.input_data: data
+            }
+            pred = self.session.run([self.model.predictions], input_dict)
+            pred = pred[0]
+            return pred[0]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.session.close()
