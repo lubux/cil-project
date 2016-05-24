@@ -2,10 +2,16 @@ import time
 import tensorflow as tf
 import numpy as np
 import pickle
-import cnntwitter.CNNTwitterPreprocessor as prep
+import CNNTwitterPreprocessor as prep
 import os
 import re
 
+"""
+Implementation inspired by:
+http://alt.qcri.org/semeval2015/cdrom/pdf/SemEval079.pdf
+Interesting Blog post to read:
+http://www.wildml.com/2015/12/implementing-a-cnn-for-text-classification-in-tensorflow/
+"""
 class CNNTwitterModel:
     def __init__(self, is_train, params):
         self._create_graph(is_train, params)
@@ -61,29 +67,34 @@ class CNNTwitterModel:
                                     name="max_pool")
         pooled_res = tf.reshape(pooled_res, [-1, self.filter_num])
 
+        # add drop out in training mode (avoid overfitting)
         if is_train and self.dropout_prob < 1:
             pooled_res = tf.nn.dropout(pooled_res, self.dropout_prob)
 
-        # add l2 regulation
+        # add l2 regulation, avoid large values, see CIL slides (Neural Networks)
         l2_reg = tf.constant(0.0)
-        # soft max
+        # softmax layer
         softmax_w = tf.get_variable("softmax_w", [self.filter_num, 2])
         softmax_b = tf.get_variable("softmax_b", [2])
         self.logits = tf.nn.xw_plus_b(pooled_res, softmax_w, softmax_b)
+        # the cross entropy losses for softmax
         losses = tf.nn.softmax_cross_entropy_with_logits(self.logits, self.targets)
         l2_reg += tf.nn.l2_loss(softmax_w)
         l2_reg += tf.nn.l2_loss(softmax_b)
+        # the total loss function
         self.loss = tf.reduce_mean(losses) + self.l2_reg_lambda * l2_reg
         self.probabilities = tf.nn.softmax(self.logits)
+        # the predictions are the maximum values
         self.predictions = tf.argmax(self.logits, 1, name="predictions")
-
+        # how many predictions are correct?
         correct_predictions = tf.equal(self.predictions, tf.argmax(self.targets, 1))
         self.accuracy = tf.reduce_mean(tf.cast(correct_predictions, "float"), name="accuracy")
 
         self.global_step = tf.Variable(0, name="global_step", trainable=False)
         if not is_train:
             return
-        # only in training mode
+        # only in training mode, optimize loss with Adam optimizer
+        # -> http://arxiv.org/pdf/1412.6980v8.pdf
         self.train_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss,
                                                                             global_step=self.global_step)
 
@@ -98,7 +109,7 @@ class CNNTwitterParams:
         self.filter_size = 5
         self.dropout_prob = 0.5
         self.learning_rate = 1e-4
-        self.max_max_epoch = 10
+        self.max_max_epoch = 6
         self.init_scale = 0.05
         self.l2_reg_lambda = 1e-4
 
@@ -148,6 +159,8 @@ def train_model(pre_data_path,
     eval_config.sentence_length = max_sent_len
     eval_config.dropout_prob = 1.0
 
+    acc_last = 2
+
     print("Start Training")
     with tf.Graph().as_default(), tf.Session() as session, open(out_log, "w") as log:
         initializer = tf.random_uniform_initializer(-config.init_scale,
@@ -164,9 +177,11 @@ def train_model(pre_data_path,
             start_time = time.time()
             _, loss, acc =_run_epoch(session, m, data_train, m.train_op, verbose=True)
             end_time = time.time()
-            train_time += (end_time-start_time)
+            train_epoch_time = end_time-start_time
+            train_time += train_epoch_time
             save_path = saver.save(session, os.path.join(model_store_dir, model_name + ".ckpt"), global_step=(i + 1))
-            print("Training Summary -> Loss: %f, Accuracy %f" % (loss, acc))
+            log.write("Epoch %d Train Loss: %f, Accuracy: %f\n Time: %d" % (i+1, loss, acc, train_epoch_time))
+            print("Training Summary -> Loss: %f, Accuracy %f Time: %d" % (loss, acc, train_epoch_time))
             print("Model saved in file: %s" % save_path)
 
             # shuffle data
@@ -175,10 +190,54 @@ def train_model(pre_data_path,
             print("Start evaluation for Epoch %d" % (i+1))
             _, loss, acc = _run_epoch(session, m_eval, data_eval, tf.no_op(), verbose=False)
             print("Evaluation -> Loss: %f, Accuracy %f" % (loss, acc))
-            log.write("Epoch %d Loss: %f, Accuracy %f\n" % (i+1, loss, acc))
+            log.write("Epoch %d Val Loss: %f, Accuracy %f\n" % (i+1, loss, acc))
             log.flush()
+            if acc_last < acc:
+                print("Lost accuracy on validation set in this epoch (Before: %f, Cur: %f) -> STOP"
+                      % (acc_last, acc))
+                break
+            acc_last = acc
 
     print("Training Finished after: %f seconds" % train_time)
+
+
+def evaluate_on_test(pre_data_path, path_testdata_pos, path_testdata_neg, model_path, config=CNNTwitterParams()):
+    [max_sent_len, word_to_id, vocab] = load_data(pre_data_path)
+    config.vocab_size = len(vocab)
+    config.sentence_length = max_sent_len
+    config.dropout_prob = 1.0
+
+    data_test_p = get_data_mat(path_testdata_pos, max_sent_len, word_to_id, True)
+    data_test_n = get_data_mat(path_testdata_neg, max_sent_len, word_to_id, False)
+    data_test = merge_and_shuffle(data_test_p, data_test_n)
+
+    with tf.Graph().as_default():
+        session = tf.Session()
+        with session.as_default():
+            with tf.variable_scope("model", reuse=False):
+                model = CNNTwitterModel(False, config)
+
+            tf.initialize_all_variables().run()
+            saver = tf.train.Saver(tf.all_variables())
+            ckpt = tf.train.get_checkpoint_state(model_path)
+            if ckpt and ckpt.model_checkpoint_path:
+                saver.restore(session, ckpt.model_checkpoint_path)
+
+            count = 0
+            loss = 0
+            acc = 0
+            for (x, y) in mat_iterator(data_test, model.batch_size):
+                input_dict = {
+                     model.input_data: x,
+                     model.targets: y,
+                }
+                batch_loss, batch_accuracy = session.run([model.loss, model.accuracy], input_dict)
+                loss += batch_loss
+                acc += batch_accuracy
+                count += 1
+            acc /= count
+            loss /= count
+    return loss, acc
 
 
 def eval_kaggle_test(pre_data_path, model_path, path_testdata, config=CNNTwitterParams(), outfile="./out.csv"):
@@ -203,11 +262,11 @@ def eval_kaggle_test(pre_data_path, model_path, path_testdata, config=CNNTwitter
             count = 1
             out.write("Id,Prediction\n")
             print("Id,Prediction")
-            for step, (x, y) in enumerate(mat_iterator(data, model.batch_size)):
-                feed_dict = {
+            for (x, y) in mat_iterator(data, model.batch_size):
+                input_dict = {
                     model.input_data: x
                 }
-                prediction = session.run([model.predictions], feed_dict)
+                prediction = session.run([model.predictions], input_dict)
                 for it in np.nditer(prediction):
                     if it == 0:
                         # idx 0 is positive

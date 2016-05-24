@@ -1,4 +1,4 @@
-import cnntwitter.CNNTwitterPreprocessor as prep
+import CNNTwitterPreprocessor as prep
 
 train_size_per_class = 250000
 valid_per_class = 50000

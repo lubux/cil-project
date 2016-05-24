@@ -1,8 +1,20 @@
-from cnntwitter.CNNTwitterPreprocessor import Preprocessor
-import cnntwitter.CNNTwitter as cn
-import cnntwitter.CNNTwitterPreprocessor as prep
+from CNNTwitterPreprocessor import Preprocessor
+import CNNTwitter as cn
+import CNNTwitterPreprocessor as prep
 import os.path
+import argparse
+
 large = True
+
+parser = argparse.ArgumentParser(description='Evaluate model on testset')
+parser.add_argument('-s', '--small', action='store_true',
+                    help='indicates to use the small training set')
+parser.add_argument('-mn', '--modelname', type=str, nargs=1,
+                    help='the name of the model', default="twitter_train")
+args = parser.parse_args()
+
+if args.small:
+    large = False
 
 if large:
     train_pos_full = "./twitter-datasets/train_pos_full.txt"
@@ -13,7 +25,7 @@ if large:
     store_model = "./model/"
     val_pos = "./twitter-datasets/val_pos_large.txt"
     val_neg = "./twitter-datasets/val_neg_large.txt"
-    model_name = "twitter_train"
+    model_name = args.modelname
     vocab_size = 30000
 else:
     train_pos_full = "./twitter-datasets/train_pos_full.txt"
@@ -24,7 +36,7 @@ else:
     store_model = "./model/"
     val_pos = "./twitter-datasets/val_pos.txt"
     val_neg = "./twitter-datasets/val_neg.txt"
-    model_name = "twitter_train"
+    model_name = args.modelname
     vocab_size = 30000
 
 if not os.path.isfile(val_pos):

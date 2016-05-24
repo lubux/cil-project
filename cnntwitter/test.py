@@ -1,6 +1,6 @@
-from cnntwitter.CNNTwitterPreprocessor import Preprocessor
-import cnntwitter.CNNTwitterPreprocessor as prep
-import cnntwitter.CNNTwitter as cn
+from CNNTwitterPreprocessor import Preprocessor
+import CNNTwitterPreprocessor as prep
+import CNNTwitter as cn
 
 """
 temp = Preprocessor()

@@ -3,6 +3,10 @@ import re
 
 TOKEN_PAD = "<p>"
 TOKEN_UNKOWN = "<u>"
+TOKEN_SMILE = "<smile>"
+TOKEN_CRY = "<cry>"
+TOKEN_LAUGH = "<laugh>"
+
 
 class Preprocessor:
     def __init__(self):
@@ -50,12 +54,12 @@ cry = [":-(", ":s", ":'-("]
 
 def replace_word(word):
     if word in smile:
-        return "<smile>"
+        return TOKEN_SMILE
     if word in cry:
-        return "<cry>"
+        return TOKEN_CRY
     temp = re.sub(r'([a-z])\1+', r'\1', word)
     if "haha" in temp or "hehe" in temp:
-        return "<laugh>"
+        return TOKEN_LAUGH
     return re.sub(r'([a-z])\1+', r'\1'*2, word)
 
 
